@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Foundry: build",
+      "type": "shell",
+      "command": "forge build --sizes",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Foundry: test",
+      "type": "shell",
+      "command": "forge test -vvv",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Foundry: format check",
+      "type": "shell",
+      "command": "forge fmt --check",
+      "problemMatcher": []
+    },
+    {
+      "label": "Foundry: CI local",
+      "type": "shell",
+      "command": "bash scripts/ci.sh",
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}
