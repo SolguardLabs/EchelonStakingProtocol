@@ -2,7 +2,8 @@
 /cache/
 /out/
 /broadcast/
-/lib/
+/lib/*
+!/lib/forge-std
 
 # Cobertura y perfiles
 /coverage/
