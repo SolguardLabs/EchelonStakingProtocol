@@ -1,124 +1,142 @@
+<p align="center">
+  <img src="./assets/banner.png" alt="EchelonStakingProtocol" width="100%" />
+</p>
+
 # Echelon Staking Protocol
 
-![banner](./assets/banner.png)
+[![CI](https://github.com/SolguardLabs/EchelonStakingProtocol/actions/workflows/ci.yml/badge.svg)](https://github.com/SolguardLabs/EchelonStakingProtocol/actions/workflows/ci.yml)
+[![Release integrity](https://github.com/SolguardLabs/EchelonStakingProtocol/actions/workflows/release-integrity.yml/badge.svg)](https://github.com/SolguardLabs/EchelonStakingProtocol/actions/workflows/release-integrity.yml)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636)](https://soliditylang.org/)
+[![Foundry](https://img.shields.io/badge/Foundry-1.7.1-FF6B35)](https://getfoundry.sh/)
 
-Echelon es un protocolo modular de *staking* para activos ERC-20. Cada depósito se representa
-mediante una posición ERC-721 y combina tres elementos económicos: un nivel de bloqueo, un peso
-de recompensa y una penalización decreciente por salida anticipada. Las emisiones se programan por
-*epochs*, lo que permite variar presupuesto y tasa sin sustituir el contrato de custodia.
+Echelon es una infraestructura modular de staking ERC-20 con posiciones ERC-721, compromisos por
+tier, emisiones programadas por epoch, salidas con penalización lineal y slashing diferido. El
+sistema separa custodia, política, recompensas, gobierno, reservas, lectura y analítica de riesgo para
+que cada dominio pueda revisarse y operarse de forma independiente.
 
-El repositorio contiene los contratos, pruebas con Foundry, un script de despliegue y utilidades de
-integración continua.
+## Capacidades
+
+- posiciones transferibles con autorización ERC-721;
+- tiers configurables con multiplicador, lock, cooldown, mínimo y penalización;
+- índice global de recompensa con presupuestos y tasas por epoch;
+- acumulación ponderada y checkpoints por posición;
+- salida parcial o total con protección de slippage sobre la penalización;
+- slashing con evidencia, cola, retardo y cancelación de emergencia;
+- roles separados para gobierno, recompensas, guardianes, keepers y slashing;
+- conciliación de principal, reserva, supply de posiciones y peso global;
+- motor de riesgo con cobertura, runway, stress, capacidad y concentración HHI.
 
 ## Arquitectura
 
-```text
-                              +----------------------+
-                              | EchelonAccessManager |
-                              +----------+-----------+
-                                         |
-           +-----------------------------+-----------------------------+
-           |                             |                             |
-+----------v-----------+      +----------v-----------+      +----------v----------+
-| LockTierRegistry     |      | EpochRewardController|      | SlashingManager     |
-| niveles y compromisos|      | epochs e índice global|      | cola y ejecución   |
-+----------+-----------+      +----------+-----------+      +----------+----------+
-           |                             |                             |
-           +-----------------------------+-----------------------------+
-                                         |
-                              +----------v-----------+
-                              | EchelonStakingVault  |
-                              | principal y rewards  |
-                              +----+-------------+---+
-                                   |             |
-                         +---------v--+      +---v------------+
-                         | PositionNFT |      | PenaltyReserve |
-                         +-------------+      +----------------+
-                                         |
-                              +----------v-----------+
-                              | Lens y Monitor       |
-                              | lectura y alertas    |
-                              +----------------------+
+```mermaid
+flowchart TB
+    G["AccessManager"] --> T["LockTierRegistry"]
+    G --> R["EpochRewardController"]
+    G --> S["SlashingManager"]
+    T --> V["EchelonStakingVault"]
+    R --> V
+    S --> V
+    V --> N["StakePositionToken"]
+    V --> P["PenaltyReserve"]
+    V --> L["EchelonLens"]
+    R --> L
+    V --> M["EchelonMonitor"]
+    R --> M
+    V --> K["EchelonRiskEngine"]
+    R --> K
 ```
 
-- `EchelonStakingVault` custodia el principal y gestiona `stake`, aumentos, cambios de nivel,
-  reclamaciones, salidas y *slashes*.
-- `EpochRewardController` mantiene un índice acumulativo por unidad de peso y limita las emisiones
-  al presupuesto configurado en cada *epoch*.
-- `LockTierRegistry` publica niveles inmutables con duración, multiplicador, periodo de espera,
-  penalización máxima y depósito mínimo.
-- `StakePositionToken` representa la propiedad y delegación de cada posición mediante ERC-721.
-- `SlashingManager` separa la propuesta de un *slash* de su ejecución mediante una cola con retardo
-  y evidencia identificada por hash.
-- `PenaltyReserve` contabiliza por separado penalizaciones de salida y principal recortado.
-- `EchelonLens` agrega lecturas para interfaces, indexadores y monitorización operativa.
-- `EchelonMonitor` comprueba enlaces entre módulos, solvencia, conciliación de posiciones y salud
-  de los *epochs* para *keepers* y sistemas de alertas.
+El vault es el único custodio del principal. El controller mantiene la liquidez de recompensa y el
+índice global. El NFT define propiedad y delegación, pero no almacena magnitudes económicas.
 
-## Requisitos
+```mermaid
+sequenceDiagram
+    participant U as Staker
+    participant V as Vault
+    participant C as RewardController
+    participant N as PositionNFT
+    participant T as Tokens
+    U->>V: stake(amount, tier, recipient)
+    V->>T: transferFrom principal
+    V->>C: onWeightChange(0, weight)
+    C-->>V: index + epoch
+    V->>N: mint(positionId)
+    V-->>U: PositionOpened
+```
 
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) actualizado.
-- Solidity `0.8.24` (Foundry instala el compilador cuando es necesario).
-- Dos tokens ERC-20 distintos: uno para el principal y otro para recompensas.
+## Modelo económico
+
+Para principal `P`, multiplicador de tier `m` y escala de `10.000` puntos básicos:
+
+```text
+weight = floor(P × m / 10 000)
+index_delta = floor(emission × 1e27 / total_weight)
+position_reward = floor(weight × (index - index_paid) / 1e27)
+```
+
+La penalización de salida desciende linealmente desde el máximo comprometido hasta cero en
+`unlockAt`. El llamante aporta `maximumPenalty`; la operación revierte si la cotización lo supera.
+
+```mermaid
+flowchart LR
+    B["Budget del epoch"] --> E["Emisión por segundo"]
+    E --> I["Índice global"]
+    W["Peso de posición"] --> A["Acumulación"]
+    I --> A
+    A --> C["Claim"]
+    C --> U["Usuario"]
+    B -. restante .-> F["Liquidez futura"]
+```
+
+## Motor de riesgo
+
+`EchelonRiskEngine` es de solo lectura y deriva:
+
+```text
+unpaid_emitted = max(0, emitted - skipped - paid)
+scheduled_remaining = max(0, configured - emitted)
+obligations = unpaid_emitted + scheduled_remaining
+coverage_bps = liquidity × 10 000 / obligations
+runway_seconds = liquidity / active_reward_rate
+```
+
+La evaluación aplica un haircut a la liquidez y clasifica la posición como `Healthy`, `Watch`,
+`Constrained` o `Paused`. El modelo también calcula capacidad a cobertura objetivo y concentración
+del peso de una cartera mediante HHI.
 
 ## Inicio rápido
 
+Requisitos:
+
+- Foundry `1.7.1`;
+- Git con soporte de submódulos;
+- Solidity `0.8.24`, instalado automáticamente por Foundry.
+
 ```bash
-forge build
+git submodule update --init --recursive
+forge build --sizes
 forge test
 ```
 
-La suite completa con los parámetros de CI se ejecuta con:
+Validación completa:
 
 ```bash
 bash scripts/ci.sh
 ```
 
-Para ejecutar un archivo o caso concreto se pueden pasar argumentos directamente a Forge:
+Ejecutar una suite concreta:
 
 ```bash
-bash scripts/tests.sh --match-path test/integration/Slashing.t.sol
-bash scripts/tests.sh --match-test test_partialSlashReconcilesPrincipalWeightAndReserve
+bash scripts/tests.sh --match-path test/integration/EpochRewards.t.sol
 ```
-
-## Flujo del protocolo
-
-1. Un usuario aprueba el token de principal y llama a `stake(amount, tierId, recipient)`.
-2. El vault crea una posición, calcula su peso y acuña el NFT al destinatario.
-3. Las emisiones activas incrementan el índice global según el peso total del sistema.
-4. El propietario o un operador autorizado puede reclamar recompensas, aumentar la posición,
-   cambiar de nivel o retirar principal.
-5. Una salida anterior a `unlockAt` aplica la penalización lineal vigente y la envía a la reserva.
-6. Un actor con rol `SLASHER_ROLE` puede encolar una medida con evidencia; cualquier cuenta puede
-   ejecutarla una vez transcurrido el retardo, salvo que gobierno o guardián la cancelen.
-
-Los cambios de peso sincronizan primero el controlador de recompensas. De este modo, el total de
-peso, el principal custodiado y las reservas se mantienen observables en cada transición.
-
-## Roles operativos
-
-| Rol | Responsabilidad |
-| --- | --- |
-| `DEFAULT_ADMIN_ROLE` | Administra el rol de gobierno y la transferencia diferida del administrador. |
-| `GOVERNOR_ROLE` | Configura módulos, niveles y parámetros estructurales. |
-| `REWARD_MANAGER_ROLE` | Financia recompensas y programa *epochs*. |
-| `SLASHER_ROLE` | Encola solicitudes de *slashing* respaldadas por evidencia. |
-| `GUARDIAN_ROLE` | Pausa operaciones sensibles y cancela solicitudes en emergencia. |
-| `KEEPER_ROLE` | Identidad reservada para automatización y mantenimiento operativo. |
-
-En producción, estos roles deberían asignarse a cuentas o contratos distintos, idealmente con
-multifirma y *timelock*. El desplegador no debe conservar privilegios innecesarios.
 
 ## Despliegue
 
-El script despliega y enlaza todos los módulos. Requiere direcciones de tokens ya desplegados:
+El script despliega, enlaza y configura todos los módulos, incluido el motor de riesgo.
 
 ```bash
-export PRIVATE_KEY=<clave-del-desplegador>
-export STAKING_TOKEN=<erc20-principal>
-export REWARD_TOKEN=<erc20-recompensas>
-export TREASURY=<tesoreria>
-export GENESIS=<timestamp-futuro>
+cp .env.example .env
+source .env
 
 forge script script/DeployEchelon.s.sol:DeployEchelon \
   --rpc-url "$RPC_URL" \
@@ -126,43 +144,61 @@ forge script script/DeployEchelon.s.sol:DeployEchelon \
   --verify
 ```
 
-Variables opcionales:
+Variables obligatorias:
 
-| Variable | Valor predeterminado | Uso |
-| --- | ---: | --- |
-| `ADMIN_TRANSFER_DELAY` | `172800` | Retardo, en segundos, para transferir el administrador. |
-| `EPOCH_DURATION` | `604800` | Duración de cada *epoch*. |
-| `SLASH_DELAY` | `172800` | Retardo entre propuesta y ejecución de un *slash*. |
-| `BASE_URI` | cadena vacía | URI base de metadatos de las posiciones. |
-| `MINIMUM_STAKE` | `1e18` | Principal mínimo de los niveles iniciales. |
-| `REWARD_MANAGER` | desplegador | Cuenta operadora de recompensas. |
-| `SLASHER` | desplegador | Cuenta autorizada a encolar medidas. |
-| `GUARDIAN` | desplegador | Cuenta de respuesta a incidentes. |
-| `INITIAL_REWARD_FUNDING` | `0` | Recompensas que el script transfiere al controlador. |
-| `FIRST_EPOCH_BUDGET` | `0` | Si es mayor que cero, programa el *epoch* 0. |
-| `FIRST_EPOCH_RATE` | `budget / duration` | Tasa por segundo del *epoch* inicial. |
+| Variable | Uso |
+| --- | --- |
+| `PRIVATE_KEY` | cuenta de despliegue temporal |
+| `STAKING_TOKEN` | activo principal ERC-20 |
+| `REWARD_TOKEN` | activo de recompensa ERC-20 |
+| `RPC_URL` | endpoint de la red objetivo |
 
-Cuando `INITIAL_REWARD_FUNDING` es mayor que cero, el desplegador debe disponer del token de
-recompensas. `GENESIS` debe seguir en el futuro al configurar el primer *epoch*.
+Las direcciones de tesorería, reward manager, slasher y guardian deben ser distintas en el entorno
+operativo. La cuenta de despliegue transfiere el control administrativo una vez verificados bytecode,
+enlaces y parámetros.
 
-## Verificación y calidad
+## Roles
 
-```bash
-forge fmt --check
-forge build --sizes
-FOUNDRY_PROFILE=ci forge test -vvv
-```
+| Rol | Responsabilidad |
+| --- | --- |
+| `DEFAULT_ADMIN_ROLE` | transferencia diferida del administrador |
+| `GOVERNOR_ROLE` | estructura, módulos y políticas |
+| `REWARD_MANAGER_ROLE` | financiación y programación de epochs |
+| `SLASHER_ROLE` | propuestas respaldadas por evidencia |
+| `GUARDIAN_ROLE` | pausas y cancelación de emergencia |
+| `KEEPER_ROLE` | sincronización y mantenimiento operativo |
 
-Las pruebas cubren el ciclo de vida de posiciones, cambios de peso, contabilidad por *epoch*,
-permisos, pausas, salidas, reservas y *slashing*. Antes de cualquier despliegue real también se
-recomiendan pruebas sobre un *fork*, revisión independiente y monitorización de solvencia.
+## Estructura
 
-## Seguridad
+| Ruta | Responsabilidad |
+| --- | --- |
+| `src/staking` | custodia y ciclo de posiciones |
+| `src/rewards` | presupuestos, emisiones e índice global |
+| `src/policy` | tiers, locks, cooldowns y penalizaciones |
+| `src/security` | slashing diferido |
+| `src/risk` | capital, stress, runway y concentración |
+| `src/monitoring` | wiring, saldos, keepers y auditoría por lotes |
+| `src/views` | lecturas agregadas para interfaces e indexadores |
+| `script` | despliegue y bootstrap |
+| `test` | pruebas unitarias, integración e invariantes |
 
-Consulta [SECURITY.md](SECURITY.md) para el proceso de divulgación responsable, alcance y tiempos
-de respuesta. Este software no constituye asesoramiento financiero y no se ofrece ninguna garantía
-sobre su idoneidad para custodiar activos reales sin una revisión independiente.
+## Documentación
+
+- [Arquitectura](./docs/architecture.md)
+- [Modelo económico](./docs/economic-model.md)
+- [Recompensas y epochs](./docs/rewards-and-epochs.md)
+- [Ciclo de staking](./docs/staking-lifecycle.md)
+- [Gobierno y seguridad](./docs/governance-and-security.md)
+- [Operaciones](./docs/operations.md)
+- [Integración](./docs/integration.md)
+- [Política de seguridad](./SECURITY.md)
+
+## Calidad y versiones
+
+CI valida formato, tamaño de bytecode, 65 pruebas públicas, fuzzing, invariantes y artefactos del
+repositorio. `main` contiene el estado aprobado; `production` y el tag anotado de una publicación
+deben resolver exactamente al mismo commit.
 
 ## Licencia
 
-Los contratos declaran licencia MIT mediante SPDX.
+MIT. Consulta [LICENSE](./LICENSE).
