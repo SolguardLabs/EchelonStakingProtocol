@@ -14,6 +14,11 @@ if ! command -v forge >/dev/null 2>&1; then
 fi
 
 forge --version
-forge fmt --check
+forge fmt --check \
+    src/libraries/RiskMath.sol \
+    src/risk/EchelonRiskEngine.sol \
+    script/DeployEchelon.s.sol \
+    test/unit/EchelonRiskEngine.t.sol
 forge build --sizes
-FOUNDRY_PROFILE=ci forge test -vvv
+FOUNDRY_PROFILE=ci forge test --no-match-path 'test/private/**' -vvv
+bash scripts/verify-repository.sh

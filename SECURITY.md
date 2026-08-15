@@ -1,78 +1,121 @@
-# Política de seguridad
+# Seguridad de Echelon Staking Protocol
 
-La seguridad de Echelon Staking Protocol incluye la custodia del principal, la disponibilidad de
-salidas, la contabilidad de recompensas, el control de acceso y la integridad de las reservas.
-Agradecemos los reportes responsables que permitan investigar y corregir un riesgo antes de hacerlo
-público.
+## Versiones mantenidas
 
-## Versiones compatibles
+| Versión | Estado | Rama |
+| --- | --- | --- |
+| 1.0.x | Mantenida | `production` |
+| < 1.0 | Sin mantenimiento | Archivo histórico |
 
-La rama principal y la última versión publicada reciben correcciones de seguridad. Las revisiones
-anteriores, bifurcaciones y despliegues modificados no se consideran compatibles salvo indicación
-expresa de sus responsables.
+## Comunicación responsable
 
-## Alcance
+Los hallazgos deben enviarse mediante **GitHub Security Advisories**. No se deben publicar detalles
+técnicos sensibles en issues, discusiones ni pull requests abiertos.
 
-Se consideran dentro de alcance:
+Incluye:
 
-- contratos Solidity en `src/`;
-- scripts oficiales de despliegue y configuración;
-- errores que permitan perder, bloquear o asignar incorrectamente principal o recompensas;
-- elusión de roles, pausas, retardos o límites económicos;
-- desajustes de solvencia, contabilidad de pesos, *epochs*, penalizaciones o *slashing*;
-- reentrada, llamadas externas inseguras y comportamientos inesperados de tokens compatibles.
+- versión, commit, contrato y función;
+- precondiciones, permisos y secuencia reproducible;
+- efecto sobre principal, rewards, reservas o gobierno;
+- prueba mínima sin claves ni datos personales;
+- mitigación temporal o corrección propuesta, si existe.
 
-Quedan fuera de alcance los ataques de ingeniería social, denegación de servicio contra
-infraestructura ajena al repositorio, claves comprometidas, fallos de terceros y hallazgos que solo
-afecten a código modificado por un desplegador.
+El equipo confirmará recepción, clasificará impacto y coordinará corrección y publicación. Los
+casos con pérdida contable o control administrativo tienen prioridad máxima.
 
-## Cómo reportar
+## Fronteras de confianza
 
-No abras un *issue* público ni publiques una prueba de concepto mientras el caso esté en proceso.
-Utiliza un aviso privado de seguridad de GitHub (**Security > Advisories > New draft security
-advisory**) e incluye:
+```mermaid
+flowchart TB
+    U["Staker"] --> V["Vault"]
+    O["Operadores"] --> A["AccessManager"]
+    A --> V
+    A --> C["RewardController"]
+    A --> S["SlashingManager"]
+    V --> P["Principal token"]
+    C --> R["Reward token"]
+    V --> N["Position NFT"]
+    V --> Q["PenaltyReserve"]
+    X["Tokens no compatibles"] -. rechazados .-> V
+```
 
-1. versión, commit y contratos afectados;
-2. impacto y condiciones necesarias para reproducirlo;
-3. pasos de reproducción o una prueba mínima;
-4. estimación de severidad y activos en riesgo;
-5. cualquier mitigación temporal o corrección sugerida.
+Se consideran externos los tokens, propietarios, operadores, RPC, indexadores y automatizaciones.
+Los contratos verifican saldos exactos en transferencias de principal y recompensa; tokens con
+rebasing o fee-on-transfer no forman parte del perfil soportado.
 
-No incluyas claves privadas, frases semilla ni datos personales. Si el repositorio no tiene los
-avisos privados habilitados, contacta de forma privada con sus mantenedores y solicita un canal
-cifrado antes de compartir detalles técnicos.
+## Objetivos
 
-## Proceso de respuesta
+- el principal contabilizado debe estar completamente respaldado;
+- rewards y presupuestos deben permanecer observables por epoch;
+- supply de NFT y posiciones activas deben conciliar;
+- peso global y suma de pesos activos deben coincidir;
+- penalizaciones y principal recortado deben respaldar la reserva;
+- un cambio de rol sensible debe seguir su autoridad y retardo;
+- pausas de depósito, salida, tier y payout deben ser independientes.
 
-El objetivo operativo es:
+```mermaid
+flowchart LR
+    T["Transición"] --> P["Permisos"]
+    P --> E["Estado económico"]
+    E --> I["Invariantes"]
+    I --> M["Monitor"]
+    M --> R["Motor de riesgo"]
+    R --> D{"Decisión"}
+    D -->|saludable| C["Continuar"]
+    D -->|restringida| H["Pausar y conciliar"]
+```
 
-- confirmar la recepción en un máximo de 3 días laborables;
-- realizar una primera clasificación en un máximo de 7 días laborables;
-- mantener al reportante informado durante la investigación;
-- acordar una fecha de divulgación tras disponer de mitigación y corrección.
+## Controles
 
-Los plazos pueden variar según complejidad, dependencias y coordinación con despliegues. Se solicita
-un periodo inicial de confidencialidad de 90 días, salvo riesgo activo que requiera una respuesta
-más rápida. La atribución se ofrecerá cuando el reportante la desee y resulte legalmente posible.
+| Superficie | Control |
+| --- | --- |
+| Custodia | balance exacto antes y después de transferencias |
+| Reentrada | guard en acciones de estado y pagos |
+| Aritmética | Solidity 0.8 y `FullMath.mulDiv` |
+| Tiers | mínimo, multiplicador, duración, cooldown y penalización acotados |
+| Epochs | presupuesto prefinanciado, tasa acotada y configuración previa al inicio |
+| ACK operativo | eventos, índices y checkpoints trazables |
+| Slashing | rol, evidencia, delay, cancelación y ejecución idempotente |
+| Gobierno | roles separados y transferencia administrativa diferida |
+| Riesgo | cobertura, haircut, runway, capacidad y HHI |
+| Publicación | refs inmutables y CI sobre tag y release |
 
-## Clasificación orientativa
+## Matriz de permisos
 
-- **Crítica:** pérdida directa y generalizada de fondos o control administrativo sin privilegios.
-- **Alta:** pérdida material, insolvencia, bloqueo prolongado o elusión relevante de controles.
-- **Media:** impacto económico limitado o degradación que requiere condiciones específicas.
-- **Baja:** defensa en profundidad, observabilidad o impacto sin riesgo directo para activos.
+```mermaid
+flowchart TB
+    Admin["Default admin"] --> Gov["Governor"]
+    Gov --> RM["Reward manager"]
+    Gov --> SL["Slasher"]
+    Gov --> GD["Guardian"]
+    Gov --> KP["Keeper"]
+    RM --> Epochs["Funding + schedules"]
+    SL --> Queue["Slash queue"]
+    GD --> Pause["Pause + cancel"]
+    KP --> Sync["Sync + finalize"]
+```
 
-La severidad final considera explotabilidad, privilegios, alcance, detectabilidad y posibilidad de
-recuperación.
+En despliegues operativos, cada rol se asigna a una cuenta o contrato distinto. Gobierno debe usar
+multifirma y timelock; guardian puede tener menor latencia, permisos limitados y rotación frecuente.
 
-## Buenas prácticas de despliegue
+## Validación previa a publicación
 
-- Separar gobierno, gestión de recompensas, guardián y *slasher*.
-- Usar multifirma, *timelock* y procedimientos documentados de rotación de claves.
-- Verificar contratos y parámetros en cadena antes de transferir privilegios.
-- Monitorizar principal, peso total, liquidez de recompensas y saldo contabilizado de la reserva.
-- Ensayar pausas, cancelaciones y recuperación operativa antes de habilitar depósitos.
-- Someter cada versión y migración a revisión independiente.
+1. Revisar bytecode y tamaños.
+2. Ejecutar suite completa con el perfil `ci`.
+3. Confirmar cinco invariantes con 512 secuencias y profundidad 128.
+4. Verificar wiring de todos los módulos.
+5. Conciliar principal, reward liquidity y reserve accounting.
+6. Evaluar stress con haircuts del 10 %, 20 % y 35 %.
+7. Verificar separación de roles y transferencia de administrador.
+8. Ensayar pausa, reanudación y recuperación.
 
-Ninguna auditoría elimina por completo el riesgo. Los despliegues con activos reales deben imponer
-límites prudentes y contar con un plan de respuesta a incidentes.
+## Respuesta a incidentes
+
+El orden recomendado es: detener la superficie afectada, capturar el bloque y estado, conciliar por
+módulo, preservar evidencia, decidir contención y publicar una versión nueva. Los tags existentes no
+se mueven; una reversión se representa mediante un commit y una publicación posterior.
+
+## Fuera de alcance
+
+No se consideran componentes del protocolo la seguridad del endpoint RPC, la custodia de claves, la
+interfaz de usuario, los oráculos externos no incluidos ni las modificaciones realizadas por terceros.

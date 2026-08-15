@@ -14,6 +14,7 @@ import { EchelonStakingVault } from "../src/staking/EchelonStakingVault.sol";
 import { SlashingManager } from "../src/security/SlashingManager.sol";
 import { EchelonLens } from "../src/views/EchelonLens.sol";
 import { EchelonMonitor } from "../src/monitoring/EchelonMonitor.sol";
+import { EchelonRiskEngine } from "../src/risk/EchelonRiskEngine.sol";
 
 /// @notice Deploys, wires, and minimally bootstraps every Echelon protocol module.
 /// @dev Existing staking and reward token addresses are read from the environment.
@@ -50,6 +51,7 @@ contract DeployEchelon is Script {
         SlashingManager slashingManager;
         EchelonLens lens;
         EchelonMonitor monitor;
+        EchelonRiskEngine riskEngine;
     }
 
     function run() external returns (Deployment memory deployed) {
@@ -100,6 +102,8 @@ contract DeployEchelon is Script {
             address(deployed.penaltyReserve),
             address(deployed.slashingManager)
         );
+        deployed.riskEngine =
+            new EchelonRiskEngine(address(deployed.vault), address(deployed.rewardController));
 
         _wireModules(deployed);
         _configureInitialTiers(deployed.tierRegistry, config.minimumStake);
@@ -199,6 +203,7 @@ contract DeployEchelon is Script {
         console2.log("SlashingManager:  ", address(deployed.slashingManager));
         console2.log("Lens:             ", address(deployed.lens));
         console2.log("Monitor:          ", address(deployed.monitor));
+        console2.log("RiskEngine:       ", address(deployed.riskEngine));
         console2.log("Genesis:          ", uint256(config.genesis));
     }
 

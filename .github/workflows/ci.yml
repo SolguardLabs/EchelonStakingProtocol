@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, production, "feature/**"]
+    tags: ["v*"]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,21 +16,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  foundry:
-    name: Formato, compilación y pruebas
+  contracts:
+    name: Contracts / Foundry 1.7.1
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 25
     steps:
-      - name: Obtener el repositorio
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-
-      - name: Instalar Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          version: v1.7.1
+      - run: bash scripts/ci.sh
 
-      - name: Ejecutar verificaciones
-        run: bash scripts/ci.sh
+  repository:
+    name: Repository contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/verify-repository.sh
